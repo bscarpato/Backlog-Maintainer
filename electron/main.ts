@@ -137,8 +137,8 @@ function registerIpcHandlers(): void {
   });
 }
 
-app.whenReady().then(() => {
-  dbPath = initDatabase(app.getPath("userData"));
+app.whenReady().then(async () => {
+  dbPath = await initDatabase(app.getPath("userData"));
   registerIpcHandlers();
   createWindow();
 

@@ -4,7 +4,7 @@
  * side-effects between tests and no temp files are left on disk.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import Database from "better-sqlite3";
+import initSqlJs from "sql.js";
 import {
   closeDatabase,
   createBacklogItem,
@@ -24,9 +24,9 @@ import {
   updateTeamMember
 } from "../../../database/db";
 
-beforeEach(() => {
+beforeEach(async () => {
   // seed: false ensures no demo data pollutes test assertions
-  initDatabase(":memory:", { seed: false });
+  await initDatabase(":memory:", { seed: false });
 });
 
 afterEach(() => {
@@ -356,11 +356,12 @@ describe("deleteTeamMember", () => {
 // ── Schema migration ──────────────────────────────────────────────────────────
 
 describe("migrateSchema", () => {
-  it("converts 'active' feature status to 'in_progress'", () => {
+  it("converts 'active' feature status to 'in_progress'", async () => {
     // Build an old-style in-memory DB with the pre-migration schema
-    const oldDb = new Database(":memory:");
-    oldDb.pragma("foreign_keys = ON");
-    oldDb.exec(`
+    const SQL = await initSqlJs();
+    const oldDb = new SQL.Database();
+    oldDb.run("PRAGMA foreign_keys = ON");
+    oldDb.run(`
       CREATE TABLE features (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
@@ -368,6 +369,8 @@ describe("migrateSchema", () => {
         status TEXT NOT NULL CHECK (status IN ('active', 'completed', 'archived')) DEFAULT 'active',
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
+    `);
+    oldDb.run(`
       CREATE TABLE backlog_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
@@ -379,21 +382,23 @@ describe("migrateSchema", () => {
         FOREIGN KEY(feature_id) REFERENCES features(id) ON DELETE CASCADE
       );
     `);
-    oldDb.prepare("INSERT INTO features (title, status) VALUES (?, ?)").run("Active Feature", "active");
-    oldDb.prepare("INSERT INTO features (title, status) VALUES (?, ?)").run("Done Feature", "completed");
+    oldDb.run("INSERT INTO features (title, status) VALUES (?, ?)", ["Active Feature", "active"]);
+    oldDb.run("INSERT INTO features (title, status) VALUES (?, ?)", ["Done Feature", "completed"]);
 
     migrateSchema(oldDb);
 
-    const rows = oldDb.prepare("SELECT status FROM features ORDER BY id").all() as { status: string }[];
-    expect(rows[0].status).toBe("in_progress");
-    expect(rows[1].status).toBe("completed"); // unchanged
+    const result = oldDb.exec("SELECT status FROM features ORDER BY id");
+    const statuses = result[0].values.map((r) => r[0] as string);
+    expect(statuses[0]).toBe("in_progress");
+    expect(statuses[1]).toBe("completed"); // unchanged
 
     oldDb.close();
   });
 
-  it("creates the team_members table when it is missing", () => {
-    const freshDb = new Database(":memory:");
-    freshDb.exec(`
+  it("creates the team_members table when it is missing", async () => {
+    const SQL = await initSqlJs();
+    const freshDb = new SQL.Database();
+    freshDb.run(`
       CREATE TABLE features (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
@@ -401,6 +406,8 @@ describe("migrateSchema", () => {
         status TEXT NOT NULL DEFAULT 'a_iniciar',
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
+    `);
+    freshDb.run(`
       CREATE TABLE backlog_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
@@ -415,17 +422,17 @@ describe("migrateSchema", () => {
 
     migrateSchema(freshDb);
 
-    const table = freshDb
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='team_members'")
-      .get();
-    expect(table).toBeDefined();
+    const result = freshDb.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='team_members'");
+    expect(result.length).toBeGreaterThan(0);
+    expect(result[0].values[0][0]).toBe("team_members");
 
     freshDb.close();
   });
 
-  it("adds assignee_id column to backlog_items when it is missing", () => {
-    const freshDb = new Database(":memory:");
-    freshDb.exec(`
+  it("adds assignee_id column to backlog_items when it is missing", async () => {
+    const SQL = await initSqlJs();
+    const freshDb = new SQL.Database();
+    freshDb.run(`
       CREATE TABLE features (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
@@ -433,6 +440,8 @@ describe("migrateSchema", () => {
         status TEXT NOT NULL DEFAULT 'a_iniciar',
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
+    `);
+    freshDb.run(`
       CREATE TABLE backlog_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
@@ -447,8 +456,9 @@ describe("migrateSchema", () => {
 
     migrateSchema(freshDb);
 
-    const cols = freshDb.prepare("PRAGMA table_info(backlog_items)").all() as { name: string }[];
-    expect(cols.some((c) => c.name === "assignee_id")).toBe(true);
+    const cols = freshDb.exec("PRAGMA table_info(backlog_items)");
+    const colNames = cols[0].values.map((r) => r[1] as string);
+    expect(colNames).toContain("assignee_id");
 
     freshDb.close();
   });
