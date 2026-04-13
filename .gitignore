@@ -1,5 +1,8 @@
 node_modules/*
 !node_modules/electron/
+
+# Zip original (usar as partes .partaa, .partab, etc.)
+Arquivo.zip
 dist
 dist-electron
 release
